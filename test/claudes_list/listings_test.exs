@@ -61,7 +61,7 @@ defmodule ClaudesList.ListingsTest do
         set: [expires_at: DateTime.add(DateTime.utc_now(), -1, :day)]
       )
 
-      for _ <- 1..5, do: Listings.flag_listing(flagged)
+      for i <- 1..5, do: Listings.flag_listing(flagged, "203.0.113.#{i}")
 
       assert Listings.list_listings() |> Enum.map(& &1.id) == [ok.id]
       assert Listings.get_listing(expired.id) == nil
@@ -95,5 +95,60 @@ defmodule ClaudesList.ListingsTest do
 
     assert ClaudesList.Listings.Janitor.purge() == 1
     assert Repo.get(Listing, recent.id)
+  end
+
+  describe "flag_listing/2" do
+    test "counts one flag per client key and hides after five distinct flaggers" do
+      {listing, _} = listing_fixture()
+
+      assert {:ok, :flagged} = Listings.flag_listing(listing, "198.51.100.1")
+
+      for _ <- 1..10,
+          do: assert({:ok, :already_flagged} = Listings.flag_listing(listing, "198.51.100.1"))
+
+      assert Listings.get_listing(listing.id).flag_count == 1
+
+      for i <- 2..5, do: Listings.flag_listing(listing, "198.51.100.#{i}")
+      assert Listings.get_listing(listing.id) == nil
+      assert Listings.get_listing_for_owner(listing.id).flag_count == 5
+
+      assert {:ok, %{flag_count: 0}} = Listings.unhide_listing(listing.id)
+      assert Listings.get_listing(listing.id)
+
+      # Unhiding sticks: earlier flaggers can't re-hide it; only new ones count.
+      for i <- 1..5, do: Listings.flag_listing(listing, "198.51.100.#{i}")
+      assert Listings.get_listing(listing.id).flag_count == 0
+      assert {:ok, :flagged} = Listings.flag_listing(listing, "198.51.100.200")
+      assert Listings.get_listing(listing.id).flag_count == 1
+    end
+
+    test "editing a hidden listing never broadcasts it back onto public pages" do
+      {listing, _} = listing_fixture()
+      for i <- 1..5, do: Listings.flag_listing(listing, "192.0.2.#{i}")
+      hidden = Listings.get_listing_for_owner(listing.id)
+      refute Listings.public?(hidden)
+
+      id = listing.id
+      Listings.subscribe()
+      assert {:ok, _} = Listings.update_listing(hidden, %{"title" => "Sneaky new spam title"})
+      refute_receive {:listing_updated, %{id: ^id}}, 100
+    end
+  end
+
+  test "update_listing/2 with no changes neither writes nor broadcasts" do
+    {listing, _} = listing_fixture()
+    Listings.subscribe()
+    id = listing.id
+    assert {:ok, ^listing} = Listings.update_listing(listing, %{"title" => listing.title})
+    refute_receive {:listing_updated, %{id: ^id}}, 50
+    assert {:ok, _} = Listings.update_listing(listing, %{"title" => "A different title"})
+    assert_receive {:listing_updated, %{id: ^id}}
+  end
+
+  test "validate_listing/1 and validate_reply/1 never write" do
+    assert {:ok, %Ecto.Changeset{}} = Listings.validate_listing(listing_attrs())
+    assert {:error, %Ecto.Changeset{action: :insert}} = Listings.validate_listing(%{})
+    assert {:error, _} = Listings.validate_reply(%{"from_name" => "x"})
+    assert Listings.list_listings() == []
   end
 end

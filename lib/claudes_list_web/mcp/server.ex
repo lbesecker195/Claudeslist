@@ -272,32 +272,43 @@ defmodule ClaudesListWeb.MCP.Server do
   end
 
   defp call("create_listing", args, ctx) do
-    with :ok <- limit(:post, ctx),
-         {:ok, l, token} <- args |> Map.put("poster_kind", "agent") |> Listings.create_listing() do
+    attrs = Map.put(args, "poster_kind", "agent")
+
+    with {:ok, _} <- Listings.validate_listing(attrs),
+         :ok <- limit(:post, ctx),
+         {:ok, l, token} <- Listings.create_listing(attrs) do
       {:ok, Serializer.created(l, token)}
     end
     |> changeset_error()
   end
 
-  defp call("update_listing", args, _ctx) do
+  defp call("update_listing", args, ctx) do
+    attrs = Map.drop(args, ~w(id edit_token))
+
     with {:ok, l} <- fetch_owned(args),
-         {:ok, l} <- Listings.update_listing(l, Map.drop(args, ~w(id edit_token))) do
+         {:ok, _} <- Listings.validate_update(l, attrs),
+         :ok <- limit(:edit, ctx),
+         {:ok, l} <- Listings.update_listing(l, attrs) do
       {:ok, %{listing: Serializer.listing(l)}}
     end
     |> changeset_error()
   end
 
-  defp call("delete_listing", args, _ctx) do
+  defp call("delete_listing", args, ctx) do
     with {:ok, l} <- fetch_owned(args),
+         :ok <- limit(:edit, ctx),
          {:ok, _} <- Listings.delete_listing(l) do
       {:ok, %{deleted: true, id: l.id}}
     end
   end
 
   defp call("reply_to_listing", args, ctx) do
-    with :ok <- limit(:reply, ctx),
-         {:ok, l} <- fetch(args),
-         {:ok, r} <- Listings.create_reply(l, Map.put(args, "from_kind", "agent")) do
+    attrs = Map.put(args, "from_kind", "agent")
+
+    with {:ok, l} <- fetch(args),
+         {:ok, _} <- Listings.validate_reply(attrs),
+         :ok <- limit(:reply, ctx),
+         {:ok, r} <- Listings.create_reply(l, attrs) do
       {:ok, %{reply: Serializer.reply(r), notice: "Delivered privately to the poster."}}
     end
     |> changeset_error()
@@ -317,10 +328,10 @@ defmodule ClaudesListWeb.MCP.Server do
   end
 
   defp call("flag_listing", args, ctx) do
-    with :ok <- limit(:flag, ctx),
-         {:ok, l} <- fetch(args),
-         {:ok, _} <- Listings.flag_listing(l) do
-      {:ok, %{flagged: true, id: l.id}}
+    with {:ok, l} <- fetch(args),
+         :ok <- limit(:flag, ctx),
+         {:ok, result} <- Listings.flag_listing(l, ctx.flag_key) do
+      {:ok, %{flagged: true, id: l.id, already_flagged: result == :already_flagged}}
     end
   end
 
@@ -335,13 +346,20 @@ defmodule ClaudesListWeb.MCP.Server do
 
   defp fetch(_), do: {:error, "Missing required argument: id"}
 
-  defp fetch_owned(args) do
-    with {:ok, l} <- fetch(args) do
-      if Listings.verify_token(l, args["edit_token"]),
-        do: {:ok, l},
-        else: {:error, "Invalid edit_token for listing #{l.id}."}
+  # Owner paths bypass the flag filter so hidden listings stay manageable.
+  defp fetch_owned(%{"id" => id} = args) do
+    case Listings.get_listing_for_owner(id) do
+      nil ->
+        {:error, "Listing #{id} not found, expired, or removed."}
+
+      l ->
+        if Listings.verify_token(l, args["edit_token"]),
+          do: {:ok, l},
+          else: {:error, "Invalid edit_token for listing #{l.id}."}
     end
   end
+
+  defp fetch_owned(_), do: {:error, "Missing required argument: id"}
 
   defp limit(bucket, %{ip: ip}) do
     case RateLimiter.check(bucket, ip) do

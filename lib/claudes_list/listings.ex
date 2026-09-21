@@ -7,9 +7,10 @@ defmodule ClaudesList.Listings do
   """
 
   import Ecto.Query
+  require Logger
 
   alias ClaudesList.Repo
-  alias ClaudesList.Listings.{Listing, Reply}
+  alias ClaudesList.Listings.{Flag, Listing, Reply}
   alias ClaudesList.Categories
 
   @ttl_days 30
@@ -64,9 +65,21 @@ defmodule ClaudesList.Listings do
     where(q, [l], fragment("search @@ websearch_to_tsquery('english', ?)", ^term))
   end
 
-  def get_listing(id) do
+  def get_listing(id), do: get_from(active(), id)
+
+  @doc """
+  Loads an unexpired listing for its owner, even if flags have hidden it
+  from the public, so owners can still read replies, edit, or delete.
+  Callers must verify the edit token.
+  """
+  def get_listing_for_owner(id) do
+    now = DateTime.utc_now()
+    get_from(from(l in Listing, where: l.expires_at > ^now), id)
+  end
+
+  defp get_from(query, id) do
     case Integer.parse(to_string(id)) do
-      {int, ""} -> Repo.one(from l in active(), where: l.id == ^int)
+      {int, ""} -> Repo.one(from l in query, where: l.id == ^int)
       _ -> nil
     end
   end
@@ -113,11 +126,33 @@ defmodule ClaudesList.Listings do
   end
 
   def update_listing(%Listing{} = listing, attrs) do
-    with {:ok, listing} <- listing |> Listing.update_changeset(attrs) |> Repo.update() do
-      broadcast({:listing_updated, listing})
-      {:ok, listing}
+    changeset = Listing.update_changeset(listing, attrs)
+
+    cond do
+      not changeset.valid? ->
+        {:error, %{changeset | action: :update}}
+
+      changeset.changes == %{} ->
+        {:ok, listing}
+
+      true ->
+        with {:ok, listing} <- Repo.update(changeset) do
+          # Owners can edit listings that flags have hidden; never push
+          # those back onto public pages.
+          if public?(listing), do: broadcast({:listing_updated, listing})
+          {:ok, listing}
+        end
     end
   end
+
+  @doc "Validates an owner's edit without writing."
+  def validate_update(%Listing{} = listing, attrs),
+    do: validated(Listing.update_changeset(listing, attrs))
+
+  @doc "True when a listing is visible to the public (unexpired, not hidden by flags)."
+  def public?(%Listing{} = l),
+    do:
+      l.flag_count < @flag_threshold and DateTime.compare(l.expires_at, DateTime.utc_now()) == :gt
 
   def delete_listing(%Listing{} = listing) do
     with {:ok, listing} <- Repo.delete(listing) do
@@ -126,17 +161,79 @@ defmodule ClaudesList.Listings do
     end
   end
 
-  def flag_listing(%Listing{id: id}) do
-    {1, [listing]} =
-      from(l in Listing, where: l.id == ^id, select: l)
-      |> Repo.update_all(inc: [flag_count: 1])
+  @doc """
+  Records one flag per flag key per listing (see
+  `ClaudesListWeb.ClientIP.flag_key/1`: an IPv4 /24 or IPv6 /48), so only
+  distinct flaggers count toward hiding a listing.
+  Returns `{:ok, :flagged}` or `{:ok, :already_flagged}`.
+  """
+  def flag_listing(%Listing{id: id}, flag_key) when is_binary(flag_key) do
+    result =
+      Repo.transact(fn ->
+        case Repo.insert_all(Flag, [%{listing_id: id, client_key: flag_key, inserted_at: now()}],
+               on_conflict: :nothing
+             ) do
+          {1, _} ->
+            {1, [listing]} =
+              from(l in Listing, where: l.id == ^id, select: l)
+              |> Repo.update_all(inc: [flag_count: 1])
 
-    if listing.flag_count >= @flag_threshold, do: broadcast({:listing_deleted, listing})
-    {:ok, listing}
+            {:ok, {:flagged, listing}}
+
+          {0, _} ->
+            {:ok, :already_flagged}
+        end
+      end)
+
+    # Broadcast only after COMMIT so subscribers re-reading counts see it.
+    case result do
+      {:ok, {:flagged, %{flag_count: @flag_threshold} = listing}} ->
+        Logger.warning(
+          "listing #{listing.id} hidden after #{@flag_threshold} distinct flags; " <>
+            "restore with ClaudesList.Release.unhide(#{listing.id})"
+        )
+
+        broadcast({:listing_deleted, listing})
+        {:ok, :flagged}
+
+      {:ok, {:flagged, _}} ->
+        {:ok, :flagged}
+
+      other ->
+        other
+    end
+  end
+
+  @doc """
+  Operator action: make a hidden listing public again. Existing flag rows
+  are kept, so the same flaggers cannot immediately re-hide it; only new,
+  distinct flaggers count from here on.
+  """
+  def unhide_listing(id) do
+    case Repo.update_all(from(l in Listing, where: l.id == ^id, select: l), set: [flag_count: 0]) do
+      {1, [listing]} ->
+        broadcast({:listing_updated, listing})
+        {:ok, listing}
+
+      _ ->
+        {:error, :not_found}
+    end
   end
 
   def change_listing(listing \\ %Listing{}, attrs \\ %{}),
     do: Listing.create_changeset(listing, attrs)
+
+  @doc """
+  Validates new-listing attrs without writing, so callers can charge rate
+  limits only for requests that would actually succeed.
+  """
+  def validate_listing(attrs), do: validated(Listing.create_changeset(%Listing{}, attrs))
+
+  @doc "Validates reply attrs without writing."
+  def validate_reply(attrs), do: validated(Reply.changeset(%Reply{}, attrs))
+
+  defp validated(%Ecto.Changeset{valid?: true} = cs), do: {:ok, cs}
+  defp validated(cs), do: {:error, %{cs | action: :insert}}
 
   ## Replies
 
@@ -174,6 +271,8 @@ defmodule ClaudesList.Listings do
   defp hash(token), do: :crypto.hash(:sha256, token)
 
   ## Helpers
+
+  defp now, do: DateTime.utc_now() |> DateTime.truncate(:second)
 
   defp broadcast(msg, topic \\ @topic),
     do: Phoenix.PubSub.broadcast(ClaudesList.PubSub, topic, msg)

@@ -12,7 +12,7 @@ defmodule ClaudesListWeb.ListingLive do
     {:ok,
      socket
      |> assign(listing: listing, category: category, sent: nil, flagged: false)
-     |> assign(ip: ClientIP.Socket.get(socket))
+     |> assign(ip: ClientIP.Socket.rate_key(socket), flag_key: ClientIP.Socket.flag_key(socket))
      |> assign(page_title: "#{listing.title} - #{category.name}")
      |> assign(meta_description: String.slice(listing.body, 0, 155))
      |> assign(api_url: ClaudesListWeb.Endpoint.url() <> "/api/v1/listings/#{listing.id}")
@@ -26,7 +26,8 @@ defmodule ClaudesListWeb.ListingLive do
   end
 
   def handle_event("send", %{"reply" => params}, socket) do
-    with :ok <- rate_limit(:reply, socket),
+    with {:ok, _} <- Listings.validate_reply(params),
+         :ok <- rate_limit(:reply, socket),
          {:ok, reply} <- Listings.create_reply(socket.assigns.listing, params) do
       {:noreply,
        socket
@@ -45,7 +46,7 @@ defmodule ClaudesListWeb.ListingLive do
     if socket.assigns.flagged or rate_limit(:flag, socket) != :ok do
       {:noreply, socket}
     else
-      Listings.flag_listing(socket.assigns.listing)
+      {:ok, _} = Listings.flag_listing(socket.assigns.listing, socket.assigns.flag_key)
 
       {:noreply,
        socket
@@ -55,7 +56,7 @@ defmodule ClaudesListWeb.ListingLive do
   end
 
   defp rate_limit(bucket, socket) do
-    case RateLimiter.check(bucket, socket.assigns.ip || "unknown") do
+    case RateLimiter.check(bucket, socket.assigns.ip) do
       :ok -> :ok
       {:error, _} -> {:error, :rate_limited}
     end

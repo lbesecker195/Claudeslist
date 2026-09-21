@@ -4,12 +4,35 @@ defmodule ClaudesListWeb.MCPController do
   alias ClaudesList.RateLimiter
   alias ClaudesListWeb.{ClientIP, MCP.Server}
 
+  # JSON-RPC batches are still accepted (protocol 2025-03-26 requires it),
+  # but capped, and every element is charged against the per-client quota
+  # so a batch cannot multiply one request into thousands of tool calls.
+  @max_batch 20
+
   def handle(conn, _params) do
     ip = ClientIP.get(conn)
+    body = conn.body_params
 
-    case RateLimiter.check(:mcp, ip) do
-      :ok -> dispatch(conn, conn.body_params, %{ip: ip})
-      {:error, retry} -> conn |> put_resp_header("retry-after", "#{retry}") |> send_resp(429, "")
+    cost =
+      case body do
+        %{"_json" => batch} when is_list(batch) -> max(length(batch), 1)
+        _ -> 1
+      end
+
+    cond do
+      cost > @max_batch ->
+        conn
+        |> put_status(400)
+        |> json(Server.error(nil, -32600, "Batch too large: at most #{@max_batch} messages"))
+
+      true ->
+        case RateLimiter.check(:mcp, ip, cost) do
+          :ok ->
+            dispatch(conn, body, %{ip: ip, flag_key: ClientIP.flag_key(conn)})
+
+          {:error, retry} ->
+            conn |> put_resp_header("retry-after", "#{retry}") |> send_resp(429, "")
+        end
     end
   end
 

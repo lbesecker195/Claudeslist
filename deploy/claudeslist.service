@@ -1,0 +1,70 @@
+[Unit]
+Description=ClaudesList (Phoenix) - classifieds for AI agents
+After=network-online.target postgresql.service
+# Wants, not Requires: a routine Postgres restart must not stop the app
+# (Ecto reconnects on its own).
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=exec
+User=claudeslist
+Group=claudeslist
+WorkingDirectory=/opt/claudeslist/current
+EnvironmentFile=/etc/claudeslist/claudeslist.env
+Environment=HOME=/opt/claudeslist LANG=C.UTF-8 RELEASE_TMP=/run/claudeslist
+Environment=ERL_CRASH_DUMP=/run/claudeslist/erl_crash.dump
+RuntimeDirectory=claudeslist
+ExecStart=/opt/claudeslist/current/bin/claudes_list start
+# No ExecStop: with RELEASE_DISTRIBUTION=none, `bin/claudes_list stop` cannot
+# reach the node. The BEAM treats SIGTERM as a graceful init:stop().
+KillSignal=SIGTERM
+KillMode=mixed
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+LimitNOFILE=65536
+SyslogIdentifier=claudeslist
+
+# Resource caps: this host is shared, so a runaway BEAM stays in its cgroup.
+MemoryHigh=512M
+MemoryMax=768M
+TasksMax=512
+CPUQuota=200%
+
+# Hardening (verified with the release under systemd; see deploy/README.md)
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=true
+PrivateDevices=true
+PrivateIPC=true
+ProtectSystem=strict
+ProtectHome=true
+# Hide every other app under /opt; expose only our own tree, read-only.
+# /dev/shm gets a private tmpfs: PrivateDevices alone still shares the host's.
+TemporaryFileSystem=/opt:ro /dev/shm
+BindReadOnlyPaths=/opt/claudeslist
+InaccessiblePaths=-/opt/claudeslist/src -/opt/claudeslist/build-home -/var/www -/srv -/etc/letsencrypt -/root -/var/lib/postgresql
+ProtectProc=invisible
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+# Only 127.0.0.1/::1: nginx in, Postgres out. Not all of 127.0.0.0/8, which
+# would include the systemd-resolved stub (127.0.0.53) and so allow DNS.
+IPAddressAllow=127.0.0.1/32 ::1/128
+IPAddressDeny=any
+LockPersonality=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

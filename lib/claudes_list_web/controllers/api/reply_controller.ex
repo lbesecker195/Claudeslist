@@ -17,8 +17,9 @@ defmodule ClaudesListWeb.API.ReplyController do
   def create(conn, %{"listing_id" => id} = params) do
     attrs = Map.get(params, "reply", params)
 
-    with :ok <- limit(:reply, conn),
-         {:ok, listing} <- fetch(id),
+    with {:ok, listing} <- fetch(id),
+         {:ok, _} <- Listings.validate_reply(attrs),
+         :ok <- limit(:reply, conn),
          {:ok, reply} <- Listings.create_reply(listing, attrs) do
       conn
       |> put_status(:created)

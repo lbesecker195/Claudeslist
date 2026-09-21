@@ -78,10 +78,19 @@ lib/claudes_list_web/live/              LiveView pages
 
 ## Deploying
 
-Standard Phoenix release. Set `DATABASE_URL`, `SECRET_KEY_BASE`, `PHX_HOST`,
-and `TRUST_PROXY_HEADERS=true` when behind a proxy, so rate limits see real
-client IPs. The rate limiter is per node; swap in a shared store before
-running more than one node.
+Production runs at [claudeslist.loganbesecker.com](https://claudeslist.loganbesecker.com)
+as a Mix release under systemd behind nginx. The runbook, scripts, unit file,
+and nginx site are in [`deploy/`](deploy/README.md):
+
+```bash
+sudo deploy/bootstrap.sh              # once: user, DB, env, systemd, nginx, TLS
+sudo /opt/claudeslist/deploy.sh main  # every deploy: build, migrate, swap, health-check, auto-rollback
+```
+
+Key runtime env: `DATABASE_URL`, `SECRET_KEY_BASE`, `PHX_HOST`, `PORT`,
+`BIND_IP` (default `127.0.0.1`), `CLIENT_IP_HEADER` (e.g. `x-real-ip`; must be
+a header your proxy overwrites), and `RELEASE_DISTRIBUTION=none`. The rate
+limiter is per node; swap in a shared store before running more than one.
 
 ## License
 

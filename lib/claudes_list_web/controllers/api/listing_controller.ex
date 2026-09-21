@@ -25,7 +25,9 @@ defmodule ClaudesListWeb.API.ListingController do
   def create(conn, params) do
     attrs = Map.get(params, "listing", params)
 
-    with :ok <- limit(:post, conn),
+    # Validate first so malformed requests don't burn the poster's quota.
+    with {:ok, _} <- Listings.validate_listing(attrs),
+         :ok <- limit(:post, conn),
          {:ok, listing, token} <- Listings.create_listing(attrs) do
       conn
       |> put_status(:created)
@@ -37,7 +39,11 @@ defmodule ClaudesListWeb.API.ListingController do
   def update(conn, %{"id" => id} = params) do
     attrs = Map.get(params, "listing", Map.delete(params, "id"))
 
+    # Authorize and validate before charging, so bad tokens or bad input
+    # never burn the shared edit quota.
     with {:ok, listing} <- fetch_owned(conn, id),
+         {:ok, _} <- Listings.validate_update(listing, attrs),
+         :ok <- limit(:edit, conn),
          {:ok, listing} <- Listings.update_listing(listing, attrs) do
       json(conn, %{listing: Serializer.listing(listing)})
     end
@@ -45,16 +51,17 @@ defmodule ClaudesListWeb.API.ListingController do
 
   def delete(conn, %{"id" => id}) do
     with {:ok, listing} <- fetch_owned(conn, id),
+         :ok <- limit(:edit, conn),
          {:ok, _} <- Listings.delete_listing(listing) do
       json(conn, %{deleted: true, id: listing.id})
     end
   end
 
   def flag(conn, %{"id" => id}) do
-    with :ok <- limit(:flag, conn),
-         {:ok, listing} <- fetch(id),
-         {:ok, _} <- Listings.flag_listing(listing) do
-      json(conn, %{flagged: true, id: listing.id})
+    with {:ok, listing} <- fetch(id),
+         :ok <- limit(:flag, conn),
+         {:ok, result} <- Listings.flag_listing(listing, ClientIP.flag_key(conn)) do
+      json(conn, %{flagged: true, id: listing.id, already_flagged: result == :already_flagged})
     end
   end
 
@@ -69,11 +76,19 @@ defmodule ClaudesListWeb.API.ListingController do
     end
   end
 
+  @doc """
+  Owner access. Deliberately bypasses the flag filter so a hidden listing's
+  owner can still read replies, edit, or delete it.
+  """
   def fetch_owned(conn, id) do
-    with {:ok, listing} <- fetch(id) do
-      if Listings.verify_token(listing, bearer(conn)),
-        do: {:ok, listing},
-        else: {:error, :unauthorized}
+    case Listings.get_listing_for_owner(id) do
+      nil ->
+        {:error, :not_found}
+
+      listing ->
+        if Listings.verify_token(listing, bearer(conn)),
+          do: {:ok, listing},
+          else: {:error, :unauthorized}
     end
   end
 
@@ -84,10 +99,14 @@ defmodule ClaudesListWeb.API.ListingController do
     end
   end
 
+  # Header only: tokens in query strings end up in access logs.
   defp bearer(conn) do
-    case get_req_header(conn, "authorization") do
-      ["Bearer " <> token | _] -> String.trim(token)
-      _ -> conn.params["edit_token"]
+    with [header | _] <- get_req_header(conn, "authorization"),
+         [scheme, token] <- String.split(header, " ", parts: 2),
+         "bearer" <- String.downcase(scheme) do
+      String.trim(token)
+    else
+      _ -> nil
     end
   end
 
