@@ -56,9 +56,11 @@ RestrictNamespaces=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
-# Only 127.0.0.1/::1: nginx in, Postgres out. Not all of 127.0.0.0/8, which
-# would include the systemd-resolved stub (127.0.0.53) and so allow DNS.
-IPAddressAllow=127.0.0.1/32 ::1/128
+# nginx in, Postgres out, plus the DNS stub and the analytics collector the
+# app pings (seriouslysimpleanalytics.com, same host). Everything else is
+# denied, so a compromised app has nowhere to send data. If the collector
+# moves, update this address or the pings fail — they are logged when they do.
+IPAddressAllow=127.0.0.1/32 ::1/128 127.0.0.53/32 95.111.235.216/32
 IPAddressDeny=any
 LockPersonality=true
 SystemCallArchitectures=native

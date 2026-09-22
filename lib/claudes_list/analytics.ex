@@ -102,11 +102,16 @@ defmodule ClaudesList.Analytics do
     http_opts = [timeout: @timeout, connect_timeout: @timeout, ssl: ssl_opts()]
 
     case :httpc.request(:get, request, http_opts, body_format: :binary) do
-      {:ok, _} -> :ok
-      {:error, reason} -> Logger.debug("analytics ping failed: #{inspect(reason)}")
+      {:ok, _} ->
+        :ok
+
+      # Loud enough to notice in the journal: a blocked egress rule or a
+      # moved collector would otherwise drop every event in silence.
+      {:error, reason} ->
+        Logger.info("analytics ping failed: #{inspect(reason)}")
     end
   catch
-    kind, reason -> Logger.debug("analytics ping crashed: #{inspect({kind, reason})}")
+    kind, reason -> Logger.info("analytics ping crashed: #{inspect({kind, reason})}")
   end
 
   defp ssl_opts do
