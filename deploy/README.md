@@ -84,9 +84,15 @@ Migrations aren't reversed automatically; they're additive so far.
   private `/tmp`, `/var/tmp` and `/dev/shm`. Other apps under `/opt`, `/var/www` and
   `/srv`, TLS keys, and the build tree are hidden. There are no capabilities,
   a seccomp `@system-service` filter applies, and IP traffic is allowed only
-  to and from `127.0.0.1`/`::1` (nginx in, Postgres out, no DNS). It's capped
-  at 768 MB of memory, 512 tasks and 2 CPUs, so it can't starve the other
+  to and from `127.0.0.1`/`::1`, the DNS stub, and the analytics collector
+  (nginx in, Postgres out, usage pings out, nothing else). It's capped at
+  768 MB of memory, 512 tasks and 2 CPUs, so it can't starve the other
   tenants. `systemd-analyze security` rates it OK.
+- **Analytics egress.** `IPAddressAllow` in the unit lists the collector's
+  address. Move the collector without updating it and every ping fails; the
+  failures are logged, so watch for `analytics ping failed` in the journal.
+  Check a rule change before shipping it with:
+  `systemd-run --wait --pipe -p IPAddressDeny=any -p IPAddressAllow="<rule>" curl -sv <endpoint>`
 - **Unprivileged builds.** Dependency and asset build code runs as
   `claudeslist-build`, never as root, and never sees the env file. Each
   finished release is chowned to root before anything else touches it.
