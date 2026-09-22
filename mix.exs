@@ -23,7 +23,8 @@ defmodule ClaudesList.MixProject do
   def application do
     [
       mod: {ClaudesList.Application, []},
-      extra_applications: [:logger, :runtime_tools]
+      # :inets/:ssl power the fire-and-forget analytics ping (no HTTP dep).
+      extra_applications: [:logger, :runtime_tools, :inets, :ssl]
     ]
   end
 

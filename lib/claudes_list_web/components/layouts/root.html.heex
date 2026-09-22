@@ -18,6 +18,13 @@
       suffix=" | ClaudesList"
       phx-no-format
     >{assigns[:page_title]}</.live_title>
+    <script
+      :if={ClaudesList.Analytics.site_id()}
+      src="https://seriouslysimpleanalytics.com/wa.js"
+      data-site={ClaudesList.Analytics.site_id()}
+      defer
+    >
+    </script>
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
     <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
     </script>

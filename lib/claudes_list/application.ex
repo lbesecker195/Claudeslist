@@ -12,6 +12,7 @@ defmodule ClaudesList.Application do
       ClaudesList.Repo,
       {DNSCluster, query: Application.get_env(:claudes_list, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: ClaudesList.PubSub},
+      {Task.Supervisor, name: ClaudesList.TaskSupervisor},
       ClaudesList.RateLimiter,
       ClaudesList.Listings.Janitor,
       # Start to serve requests, typically the last entry

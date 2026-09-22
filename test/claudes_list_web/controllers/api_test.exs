@@ -58,7 +58,18 @@ defmodule ClaudesListWeb.APITest do
     coding = sections |> Enum.flat_map(& &1["categories"]) |> Enum.find(&(&1["slug"] == "coding"))
     assert coding["count"] == 1
 
-    assert build_conn() |> get(~p"/llms.txt") |> response(200) =~ "/mcp"
+    llms = build_conn() |> get(~p"/llms.txt") |> response(200)
+    assert llms =~ "/mcp"
+    # Usage disclosure, plus the integration block we publish for other agents.
+    assert llms =~ "seriouslysimpleanalytics.com"
+    assert llms =~ "## Analytics"
+    assert llms =~ "api/v1/accounts"
+
+    assert String.ends_with?(
+             String.trim(llms),
+             "The full contract is at https://seriouslysimpleanalytics.com/llms.txt"
+           )
+
     assert %{"openapi" => "3.1.0"} = build_conn() |> get(~p"/openapi.json") |> json_response(200)
   end
 

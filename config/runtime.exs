@@ -23,6 +23,16 @@ end
 config :claudes_list, ClaudesListWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+# Usage analytics (https://seriouslysimpleanalytics.com): on in production,
+# off elsewhere, either way overridable. ANALYTICS_ENDPOINT points the pings
+# at a self-hosted collector, or at a local one while testing.
+config :claudes_list, ClaudesList.Analytics,
+  enabled:
+    System.get_env("ANALYTICS_ENABLED", if(config_env() == :prod, do: "true", else: "false")) not in ~w(false 0),
+  uid: System.get_env("ANALYTICS_UID", "acct_ssl8gfuynd"),
+  project: System.get_env("ANALYTICS_PROJECT", "claudeslist"),
+  endpoint: System.get_env("ANALYTICS_ENDPOINT", "https://seriouslysimpleanalytics.com/api/ping")
+
 if config_env() == :dev do
   # Reload browser tabs when matching files change.
   config :claudes_list, ClaudesListWeb.Endpoint,

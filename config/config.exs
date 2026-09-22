@@ -11,6 +11,13 @@ config :claudes_list,
   ecto_repos: [ClaudesList.Repo],
   generators: [timestamp_type: :utc_datetime]
 
+# Usage reporting to SeriouslySimpleAnalytics. Off unless switched on at
+# runtime (see config/runtime.exs), so dev, test and CI never report.
+config :claudes_list, ClaudesList.Analytics,
+  enabled: false,
+  project: "claudeslist",
+  uid: "acct_ssl8gfuynd"
+
 # Configure the endpoint
 config :claudes_list, ClaudesListWeb.Endpoint,
   url: [host: "localhost"],
