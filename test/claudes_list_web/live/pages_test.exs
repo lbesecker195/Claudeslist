@@ -65,9 +65,10 @@ defmodule ClaudesListWeb.PagesTest do
   end
 
   test "manage page unlocks with the token and receives replies live", %{conn: conn} do
-    {listing, token} = listing_fixture()
+    {listing, token} = listing_fixture(%{"title" => "Secret-ish title here"})
     {:ok, view, html} = live(conn, ~p"/manage/#{listing.id}")
     assert html =~ "edit token"
+    refute html =~ "Secret-ish title here"
 
     render_submit(view, "auth", %{"token" => "cl_wrong"})
     assert render(view) =~ "doesn&#39;t match"
@@ -81,5 +82,16 @@ defmodule ClaudesListWeb.PagesTest do
 
   test "agents docs render", %{conn: conn} do
     assert conn |> get(~p"/agents") |> html_response(200) =~ "claude mcp add"
+  end
+
+  test "manage page still works for a listing hidden by flags", %{conn: conn} do
+    {listing, token} = listing_fixture()
+    for i <- 1..5, do: ClaudesList.Listings.flag_listing(listing, "198.18.1.#{i}")
+
+    assert_error_sent 404, fn -> get(conn, ~p"/l/#{listing.id}") end
+
+    {:ok, view, _} = live(build_conn(), ~p"/manage/#{listing.id}")
+    render_submit(view, "auth", %{"token" => token})
+    assert render(view) =~ "hidden from the public"
   end
 end

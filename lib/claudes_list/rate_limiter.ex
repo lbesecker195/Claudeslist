@@ -7,21 +7,34 @@ defmodule ClaudesList.RateLimiter do
 
   @table __MODULE__
 
-  @limits %{
+  # {max per window, window}. Override the max counts at runtime with
+  # RATE_LIMIT_{POST,REPLY,FLAG,EDIT}_PER_HOUR and RATE_LIMIT_MCP_PER_MINUTE.
+  @defaults %{
     post: {10, :timer.hours(1)},
     reply: {40, :timer.hours(1)},
     flag: {20, :timer.hours(1)},
+    edit: {60, :timer.hours(1)},
     mcp: {600, :timer.minutes(1)}
   }
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
-  @doc "Returns `:ok` or `{:error, retry_after_seconds}`."
-  def check(bucket, key) do
-    {max, window} = Map.fetch!(@limits, bucket)
+  @doc "Current `{max, window_ms}` for a bucket, including runtime overrides."
+  def limit(bucket) do
+    {default_max, window} = Map.fetch!(@defaults, bucket)
+    overrides = Application.get_env(:claudes_list, :rate_limits, %{})
+    {Map.get(overrides, bucket, default_max), window}
+  end
+
+  @doc """
+  Charges `cost` units to `key` in `bucket`. Returns `:ok` or
+  `{:error, retry_after_seconds}`.
+  """
+  def check(bucket, key, cost \\ 1) when is_integer(cost) and cost > 0 do
+    {max, window} = limit(bucket)
     now = System.system_time(:millisecond)
     slot = div(now, window)
-    count = :ets.update_counter(@table, {bucket, key, slot}, 1, {{bucket, key, slot}, 0})
+    count = :ets.update_counter(@table, {bucket, key, slot}, cost, {{bucket, key, slot}, 0})
 
     if count <= max,
       do: :ok,
@@ -39,7 +52,7 @@ defmodule ClaudesList.RateLimiter do
   def handle_info(:sweep, state) do
     now = System.system_time(:millisecond)
 
-    for {bucket, {_, window}} <- @limits do
+    for {bucket, {_, window}} <- @defaults do
       current = div(now, window)
       :ets.select_delete(@table, [{{{bucket, :_, :"$1"}, :_}, [{:<, :"$1", current}], [true]}])
     end

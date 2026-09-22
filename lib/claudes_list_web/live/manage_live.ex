@@ -6,15 +6,18 @@ defmodule ClaudesListWeb.ManageLive do
   """
   use ClaudesListWeb, :live_view
 
-  alias ClaudesList.Listings
+  alias ClaudesList.{Listings, RateLimiter}
   alias ClaudesList.Listings.Listing
+  alias ClaudesListWeb.ClientIP
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
-    listing = Listings.get_listing(id) || raise ClaudesListWeb.NotFoundError
+    # Owner view: flagged-but-unexpired listings stay reachable here.
+    listing = Listings.get_listing_for_owner(id) || raise ClaudesListWeb.NotFoundError
 
     {:ok,
      assign(socket,
+       ip: ClientIP.Socket.rate_key(socket),
        listing: listing,
        authed: false,
        token_error: false,
@@ -52,21 +55,40 @@ defmodule ClaudesListWeb.ManageLive do
   end
 
   def handle_event("save", %{"listing" => params}, socket) do
-    case Listings.update_listing(socket.assigns.listing, normalize(params)) do
-      {:ok, listing} ->
-        {:noreply,
-         socket
-         |> assign(listing: listing, saved: true)
-         |> assign_form(Listing.update_changeset(listing, %{}))}
+    attrs = normalize(params)
 
-      {:error, cs} ->
+    with {:ok, _} <- Listings.validate_update(socket.assigns.listing, attrs),
+         :ok <- edit_limit(socket),
+         {:ok, listing} <- Listings.update_listing(socket.assigns.listing, attrs) do
+      {:noreply,
+       socket
+       |> assign(listing: listing, saved: true)
+       |> assign_form(Listing.update_changeset(listing, %{}))}
+    else
+      {:error, %Ecto.Changeset{} = cs} ->
         {:noreply, assign_form(socket, cs)}
+
+      {:error, :rate_limited} ->
+        {:noreply, put_flash(socket, :error, "Too many edits. Try again later.")}
     end
   end
 
   def handle_event("delete", _params, socket) do
-    {:ok, _} = Listings.delete_listing(socket.assigns.listing)
-    {:noreply, socket |> put_flash(:info, "Posting deleted.") |> push_navigate(to: ~p"/")}
+    case edit_limit(socket) do
+      :ok ->
+        {:ok, _} = Listings.delete_listing(socket.assigns.listing)
+        {:noreply, socket |> put_flash(:info, "Posting deleted.") |> push_navigate(to: ~p"/")}
+
+      {:error, :rate_limited} ->
+        {:noreply, put_flash(socket, :error, "Too many edits. Try again later.")}
+    end
+  end
+
+  defp edit_limit(socket) do
+    case RateLimiter.check(:edit, socket.assigns.ip) do
+      :ok -> :ok
+      {:error, _} -> {:error, :rate_limited}
+    end
   end
 
   @impl true
@@ -95,7 +117,12 @@ defmodule ClaudesListWeb.ManageLive do
         }
       </script>
 
-      <h1>manage: <a href={~p"/l/#{@listing.id}"}>{@listing.title}</a></h1>
+      <h1 :if={!@authed}>manage posting {@listing.id}</h1>
+      <h1 :if={@authed}>manage: <a href={~p"/l/#{@listing.id}"}>{@listing.title}</a></h1>
+      <p :if={@authed and @listing.flag_count >= 5} class="cl-notice cl-notice-warn" role="status">
+        This posting is hidden from the public because several people flagged it.
+        You can still read replies, edit, or delete it.
+      </p>
 
       <%= if !@authed do %>
         <form id="token-form" phx-submit="auth" class="cl-form cl-narrow">

@@ -93,7 +93,8 @@ defmodule ClaudesListWeb.BrowseLive do
         _ -> true
       end
 
-    in_scope and (is_nil(tag) or tag in l.tags) and (is_nil(kind) or kind == l.poster_kind)
+    Listings.public?(l) and in_scope and (is_nil(tag) or tag in l.tags) and
+      (is_nil(kind) or kind == l.poster_kind)
   end
 
   defp matches?(_, _), do: false

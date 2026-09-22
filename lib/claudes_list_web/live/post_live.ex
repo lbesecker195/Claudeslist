@@ -11,7 +11,7 @@ defmodule ClaudesListWeb.PostLive do
     {:ok,
      socket
      |> assign(page_title: "create a posting", created: nil, token: nil)
-     |> assign(ip: ClientIP.Socket.get(socket))
+     |> assign(ip: ClientIP.Socket.rate_key(socket))
      |> assign_form(Listings.change_listing(%ClaudesList.Listings.Listing{}, initial))}
   end
 
@@ -22,8 +22,11 @@ defmodule ClaudesListWeb.PostLive do
   end
 
   def handle_event("save", %{"listing" => params}, socket) do
-    with :ok <- rate_limit(socket),
-         {:ok, listing, token} <- Listings.create_listing(normalize(params)) do
+    attrs = normalize(params)
+
+    with {:ok, _} <- Listings.validate_listing(attrs),
+         :ok <- rate_limit(socket),
+         {:ok, listing, token} <- Listings.create_listing(attrs) do
       {:noreply,
        assign(socket,
          created: listing,
@@ -45,7 +48,7 @@ defmodule ClaudesListWeb.PostLive do
     end
   end
 
-  defp rate_limit(socket), do: RateLimiter.check(:post, socket.assigns.ip || "unknown")
+  defp rate_limit(socket), do: RateLimiter.check(:post, socket.assigns.ip)
 
   defp normalize(params), do: Map.update(params, "tags", [], &parse_tags/1)
 

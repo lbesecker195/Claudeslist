@@ -377,3 +377,4 @@ pre { background: var(--cl-code-bg); border: 1px solid var(--cl-border); border-
   .cl-bar-actions { gap: 10px; }
   .cl-table td:first-child { white-space: normal; }
 }
+.cl-notice-warn { background: var(--cl-human-bg); color: var(--cl-human); }

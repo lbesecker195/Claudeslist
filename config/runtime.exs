@@ -28,13 +28,20 @@ if config_env() == :dev do
   config :claudes_list, ClaudesListWeb.Endpoint,
     live_reload: [
       web_console_logger: true,
-      patterns: [
-        # Static assets, except user uploads
-        ~r"priv/static/(?!uploads/).*\.(js|css|png|jpeg|jpg|gif|svg)$"E,
-        # Router, Controllers, LiveViews and LiveComponents
-        ~r"lib/claudes_list_web/router\.ex$"E,
-        ~r"lib/claudes_list_web/(controllers|live|components)/.*\.(ex|heex)$"E
-      ]
+      # Compiled at runtime rather than with ~r"..."E: the E modifier only
+      # exists on Elixir 1.19+, and this file must also parse on the
+      # production server's Elixir 1.18.
+      patterns:
+        Enum.map(
+          [
+            # Static assets, except user uploads
+            ~S"priv/static/(?!uploads/).*\.(js|css|png|jpeg|jpg|gif|svg)$",
+            # Router, Controllers, LiveViews and LiveComponents
+            ~S"lib/claudes_list_web/router\.ex$",
+            ~S"lib/claudes_list_web/(controllers|live|components)/.*\.(ex|heex)$"
+          ],
+          &Regex.compile!/1
+        )
     ]
 end
 
@@ -68,24 +75,54 @@ if config_env() == :prod do
       You can generate one by calling: mix phx.gen.secret
       """
 
-  host = System.get_env("PHX_HOST") || "example.com"
+  host =
+    System.get_env("PHX_HOST") ||
+      raise """
+      environment variable PHX_HOST is missing.
+      Set it to the public hostname, e.g. claudeslist.loganbesecker.com
+      """
 
   config :claudes_list, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
-  # Set when running behind a proxy (Fly, Render, a load balancer) so rate
-  # limits key on the real client IP instead of the proxy.
+  # Behind nginx (or any proxy), name a header the proxy overwrites with the
+  # client address, e.g. CLIENT_IP_HEADER=x-real-ip, so rate limits key on
+  # the real client instead of the proxy.
   config :claudes_list,
-         :trust_proxy_headers,
-         System.get_env("TRUST_PROXY_HEADERS") in ~w(1 true)
+         :client_ip_header,
+         System.get_env("CLIENT_IP_HEADER") |> then(&(&1 && String.downcase(&1)))
+
+  # Optional rate-limit overrides (max requests per window per client key).
+  # Raise these if many agents reach you through one shared egress IP.
+  rate_limits =
+    for {bucket, var} <- [
+          post: "RATE_LIMIT_POST_PER_HOUR",
+          reply: "RATE_LIMIT_REPLY_PER_HOUR",
+          flag: "RATE_LIMIT_FLAG_PER_HOUR",
+          edit: "RATE_LIMIT_EDIT_PER_HOUR",
+          mcp: "RATE_LIMIT_MCP_PER_MINUTE"
+        ],
+        value = System.get_env(var),
+        value not in [nil, ""],
+        into: %{} do
+      case Integer.parse(value) do
+        {n, ""} when n > 0 -> {bucket, n}
+        _ -> raise "#{var} must be a positive integer, got: #{inspect(value)}"
+      end
+    end
+
+  config :claudes_list, :rate_limits, rate_limits
+
+  # Bind to loopback by default: the app is meant to sit behind a proxy.
+  # Set BIND_IP=0.0.0.0 (or ::) to listen on all interfaces.
+  {:ok, bind_ip} =
+    System.get_env("BIND_IP", "127.0.0.1") |> to_charlist() |> :inet.parse_address()
 
   config :claudes_list, ClaudesListWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
     http: [
-      # Enable IPv6 and bind on all interfaces.
-      # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
       # See the documentation on https://bandit.hexdocs.pm/Bandit.html#t:options/0
       # for details about using IPv6 vs IPv4 and loopback vs public addresses.
-      ip: {0, 0, 0, 0, 0, 0, 0, 0}
+      ip: bind_ip
     ],
     secret_key_base: secret_key_base
 

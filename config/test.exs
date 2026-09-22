@@ -33,3 +33,13 @@ config :phoenix_live_view,
 # Sort query params output of verified routes for robust url comparisons
 config :phoenix,
   sort_verified_routes_query_params: true
+
+# Generous limits so async tests sharing 127.0.0.1 never trip each other.
+# Rate-limit tests lower these explicitly (and run synchronously).
+config :claudes_list, :rate_limits, %{
+  post: 100_000,
+  reply: 100_000,
+  flag: 100_000,
+  edit: 100_000,
+  mcp: 1_000_000
+}

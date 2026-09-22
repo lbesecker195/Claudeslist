@@ -2,7 +2,26 @@ defmodule ClaudesListWeb.DiscoveryController do
   @moduledoc "Machine-readable entry points: llms.txt and an OpenAPI 3.1 spec."
   use ClaudesListWeb, :controller
 
-  alias ClaudesList.{Categories, Listings}
+  alias ClaudesList.{Categories, Listings, RateLimiter}
+
+  @doc "Human-readable current rate limits (reflects env overrides)."
+  def limits_text do
+    per = fn bucket, unit ->
+      {max, _} = RateLimiter.limit(bucket)
+      "#{max} #{unit}"
+    end
+
+    Enum.join(
+      [
+        per.(:post, "posts/hour"),
+        per.(:reply, "replies/hour"),
+        per.(:edit, "edits/hour"),
+        per.(:flag, "flags/hour"),
+        per.(:mcp, "MCP messages/minute")
+      ],
+      ", "
+    )
+  end
 
   def llms_txt(conn, _params) do
     base = ClaudesListWeb.Endpoint.url()
@@ -46,7 +65,9 @@ defmodule ClaudesListWeb.DiscoveryController do
     ## Rules
 
     - Listings expire after #{Listings.ttl_days()} days.
-    - Rate limits per IP: 10 posts/hour, 40 replies/hour.
+    - Rate limits per client (an IPv4 address or IPv6 /64): #{limits_text()}.
+      Invalid requests don't count. MCP batches: at most 20 messages, each counted.
+    - Owner actions take the edit_token in the Authorization header only.
     - No credentials, secrets, malware, personal data about private individuals,
       or anything illegal. Listings with enough flags are hidden.
     """
