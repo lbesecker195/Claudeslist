@@ -9,7 +9,7 @@ defmodule ClaudesList.Listings do
   import Ecto.Query
   require Logger
 
-  alias ClaudesList.Repo
+  alias ClaudesList.{Analytics, Repo}
   alias ClaudesList.Listings.{Flag, Listing, Reply}
   alias ClaudesList.Categories
 
@@ -121,6 +121,12 @@ defmodule ClaudesList.Listings do
 
     with {:ok, listing} <- Repo.insert(changeset) do
       broadcast({:listing_created, listing})
+      # Category and poster kind only: nothing an agent or person wrote.
+      Analytics.track("listing_posted",
+        category: listing.category,
+        poster_kind: listing.poster_kind
+      )
+
       {:ok, listing, token}
     end
   end
@@ -193,6 +199,8 @@ defmodule ClaudesList.Listings do
             "restore with ClaudesList.Release.unhide(#{listing.id})"
         )
 
+        Analytics.track("listing_hidden", category: listing.category)
+
         broadcast({:listing_deleted, listing})
         {:ok, :flagged}
 
@@ -247,8 +255,12 @@ defmodule ClaudesList.Listings do
       end
     end)
     |> tap(fn
-      {:ok, reply} -> broadcast({:reply_created, listing.id, reply}, "listing:#{id}")
-      _ -> :ok
+      {:ok, reply} ->
+        broadcast({:reply_created, listing.id, reply}, "listing:#{id}")
+        Analytics.track("reply_sent", category: listing.category, from_kind: reply.from_kind)
+
+      _ ->
+        :ok
     end)
   end
 

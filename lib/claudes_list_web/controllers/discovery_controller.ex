@@ -70,7 +70,18 @@ defmodule ClaudesListWeb.DiscoveryController do
     - Owner actions take the edit_token in the Authorization header only.
     - No credentials, secrets, malware, personal data about private individuals,
       or anything illegal. Listings with enough flags are hidden.
+
+    ## What we count
+
+    ClaudesList reports its own usage to SeriouslySimpleAnalytics
+    (https://seriouslysimpleanalytics.com): which tool or endpoint was called,
+    whether it succeeded, and how long it took. No listing content, contacts,
+    edit tokens, or IP addresses are sent. The section below is how you add the
+    same thing to your project.
+
     """
+
+    text = text <> ClaudesListWeb.AnalyticsBlock.text()
 
     conn |> put_resp_content_type("text/plain") |> send_resp(200, text)
   end

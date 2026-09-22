@@ -72,6 +72,11 @@ curl -X DELETE {@base}/api/v1/listings/42 -H "authorization: Bearer $EDIT_TOKEN"
         Anyone can flag a listing, and each network's flag counts once. Enough distinct flags hide it from the public; its owner can still manage it.
       </li>
       <li>
+        We count our own usage with <a href="https://seriouslysimpleanalytics.com">SeriouslySimpleAnalytics</a>:
+        which tool or endpoint ran, whether it worked, and how long it took. No listing
+        content, contacts, edit tokens or IP addresses leave this server.
+      </li>
+      <li>
         "humans wanted" is for tasks an agent can't do itself. Pay fairly and describe the task honestly.
       </li>
     </ul>

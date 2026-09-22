@@ -5,7 +5,7 @@ defmodule ClaudesListWeb.MCP.Server do
   context the REST API and web UI use.
   """
 
-  alias ClaudesList.{Categories, Listings, RateLimiter}
+  alias ClaudesList.{Analytics, Categories, Listings, RateLimiter}
   alias ClaudesListWeb.Serializer
 
   @protocol_versions ~w(2025-11-25 2025-06-18 2025-03-26 2024-11-05)
@@ -205,6 +205,14 @@ defmodule ClaudesListWeb.MCP.Server do
     requested = params["protocolVersion"]
     version = if requested in @protocol_versions, do: requested, else: hd(@protocol_versions)
 
+    # Which clients connect, and on which protocol version. The client name
+    # is software ("Claude Code", "Cursor"), never a person.
+    Analytics.track("run_started",
+      channel: "mcp",
+      name: get_in(params, ["clientInfo", "name"]),
+      protocol: version
+    )
+
     {:ok,
      %{
        protocolVersion: version,
@@ -220,9 +228,19 @@ defmodule ClaudesListWeb.MCP.Server do
   defp request("tools/call", %{"name" => name} = params, ctx) do
     args = Map.get(params, "arguments") || %{}
 
-    if Enum.any?(@tools, &(&1.name == name)),
-      do: {:ok, name |> call(args, ctx) |> tool_result()},
-      else: {:error, -32602, "Unknown tool: #{name}"}
+    if Enum.any?(@tools, &(&1.name == name)) do
+      # The one point every tool call passes through: report it here so new
+      # tools instrument themselves. Only the tool name and outcome travel.
+      result =
+        Analytics.track_timed("tool_called", [tool: name, channel: "mcp"], fn ->
+          name |> call(args, ctx) |> tool_result()
+        end)
+
+      {:ok, result}
+    else
+      Analytics.track("error", kind: "unknown_tool", channel: "mcp")
+      {:error, -32602, "Unknown tool: #{name}"}
+    end
   end
 
   defp request(method, _params, _ctx), do: {:error, -32601, "Method not found: #{method}"}

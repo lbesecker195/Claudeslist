@@ -12,6 +12,7 @@ defmodule ClaudesListWeb.Router do
 
   pipeline :api do
     plug :accepts, ["json"]
+    plug ClaudesListWeb.Plugs.Analytics
   end
 
   scope "/", ClaudesListWeb do
